@@ -1,0 +1,50 @@
+import os
+import telebot
+import google.generativeai as genai
+from dotenv import load_dotenv
+
+# 1. Load your credentials
+# You can also just hardcode strings here if you're not using .env
+load_dotenv()
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GEMINI_API_KEY =  os.getenv("API_KEY")
+
+# 2. Configure Gemini with a CUSTOM PROMPT
+genai.configure(api_key=GEMINI_API_KEY)
+
+# This is where you define your bot's personality or rules
+CUSTOM_SYSTEM_PROMPT = "You are a helpful AI assistant that speaks like a Victorian-era gentleman. Always be polite and slightly formal."
+
+model = genai.GenerativeModel(
+    model_name="gemini-2.5-flash",
+    system_instruction=CUSTOM_SYSTEM_PROMPT
+)
+
+# 3. Initialize Telegram Bot
+bot = telebot.TeleBot(TELEGRAM_TOKEN)
+
+# Dictionary to store chat sessions for multi-turn conversation memory
+chat_sessions = {}
+
+@bot.message_handler(func=lambda message: True)
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+    chat_id = message.chat.id
+    
+    # Start a new session if it doesn't exist
+    if chat_id not in chat_sessions:
+        chat_sessions[chat_id] = model.start_chat(history=[])
+
+    try:
+        # Send user message to Gemini
+        response = chat_sessions[chat_id].send_message(message.text)
+        
+        # USE THIS instead of bot.reply_to:
+        bot.send_message(chat_id, response.text)
+        
+    except Exception as e:
+        bot.send_message(chat_id, "Apologies, I've encountered an error.")
+        print(f"Error: {e}")
+
+print("Bot is running...")
+bot.infinity_polling()
