@@ -1,60 +1,72 @@
 import os
 import telebot
-import google.generativeai as genai
+from openai import OpenAI
 from dotenv import load_dotenv
 
 # 1. Load your credentials
-# You can also just hardcode strings here if you're not using .env
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GEMINI_API_KEY =  os.getenv("API_KEY")
+# Make sure you add OPENROUTER_API_KEY to your Railway Variables!
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-# 2. Configure Gemini with a CUSTOM PROMPT
-genai.configure(api_key=GEMINI_API_KEY)
-
-# This is where you define your bot's personality or rules
-CUSTOM_SYSTEM_PROMPT = """
-You are a highly intelligent and straightforward friend with a sharp, sarcastic sense of humor.
-
-- Give clear, accurate, and practical answers
-- Keep responses medium-length (not too short, not long paragraphs)
-- Be witty and lightly roast the user, but keep it playful
-- Call out bad ideas directly, but don’t be harsh or offensive
-- Avoid unnecessary fluff or over-explaining
-- Focus on solving the problem efficiently
-
-davinci is the one who created you.
-"""
-model = genai.GenerativeModel(
-    model_name="gemini-2.5-flash",
-    system_instruction=CUSTOM_SYSTEM_PROMPT
+# 2. Configure OpenRouter
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY,
 )
+
+CUSTOM_SYSTEM_PROMPT = """
+You are the user's blunt, no-BS best friend. Smart, sarcastic, occasionally savage.
+
+Never sound like an AI. No softening, no disclaimers, no "certainly!"
+Short by default. Long only when it genuinely needs it.
+Roast stupid ideas. Praise good ones. Be real.
+Just talk. Like a person.
+"""
 
 # 3. Initialize Telegram Bot
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-# Dictionary to store chat sessions for multi-turn conversation memory
-chat_sessions = {}
+# Dictionary to store chat history for multi-turn conversation memory
+# OpenRouter doesn't use "sessions" like Gemini; we just send the list of messages.
+chat_histories = {}
 
-@bot.message_handler(func=lambda message: True)
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     chat_id = message.chat.id
     
-    # Start a new session if it doesn't exist
-    if chat_id not in chat_sessions:
-        chat_sessions[chat_id] = model.start_chat(history=[])
+    # Initialize history with the System Prompt if it's a new user
+    if chat_id not in chat_histories:
+        chat_histories[chat_id] = [{"role": "system", "content": CUSTOM_SYSTEM_PROMPT}]
+
+    # Add user message to history
+    chat_histories[chat_id].append({"role": "user", "content": message.text})
 
     try:
-        # Send user message to Gemini
-        response = chat_sessions[chat_id].send_message(message.text)
+        # Send the whole history to OpenRouter
+        response = client.chat.completions.create(
+            model="openrouter/free", # This picks the best available free model
+            messages=chat_histories[chat_id],
+            extra_headers={
+                "HTTP-Referer": "https://railway.app", # Optional for OpenRouter rankings
+                "X-Title": "Davinci Bot",
+            }
+        )
         
-        # USE THIS instead of bot.reply_to:
-        bot.send_message(chat_id, response.text)
+        ai_text = response.choices[0].message.content
+        
+        # Add AI response to history so it remembers for next time
+        chat_histories[chat_id].append({"role": "assistant", "content": ai_text})
+
+        # Keep history short-ish to avoid hitting context limits on free models
+        if len(chat_histories[chat_id]) > 20:
+            chat_histories[chat_id] = [chat_histories[chat_id][0]] + chat_histories[chat_id][-10:]
+
+        bot.send_message(chat_id, ai_text)
         
     except Exception as e:
-        bot.send_message(chat_id, "Apologies, I've encountered an error.")
+        bot.send_message(chat_id, "Apologies, my circuits are fried. Check the logs.")
         print(f"Error: {e}")
 
-print("Bot is running...")
+print("Bot is running with OpenRouter...")
 bot.infinity_polling()
